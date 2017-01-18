@@ -2,28 +2,26 @@ package bg.uni_sofia.s81167.pong.game;
 
 public enum Command {
 
-	DISCONNECT("disconnect"), UP("up"), DOWN("down"), SERVE("serve"), RECONNECT("reconnect");
+	DISCONNECT(1), UP(200), DOWN(208);
 
-	private final String id;
+	private final int id;
 
-	private Command(String id) {
+	private Command(int id) {
 		this.id = id;
 	}
 
-	public String toStringRepresentation() {
+	public int toInt() {
 		return id;
 	}
 
-	public static Command toCommand(String command) {
+	public static Command toCommand(int command) {
 		switch (command) {
-		case "disconnect":
+		case 1:
 			return Command.DISCONNECT;
-		case "up":
+		case 200:
 			return Command.UP;
-		case "down":
+		case 208:
 			return Command.DOWN;
-		case "serve":
-			return Command.SERVE;
 		default:
 			return null;
 		}

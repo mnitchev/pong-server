@@ -7,7 +7,10 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.sql.SQLException;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 
 import org.quartz.Job;
 import org.quartz.JobBuilder;
@@ -25,18 +28,21 @@ import org.slf4j.LoggerFactory;
 
 import bg.uni_sofia.s81167.dao.UserDAO;
 import bg.uni_sofia.s81167.model.User;
-import bg.uni_sofia.s81167.pong.game.GameContext;
+import bg.uni_sofia.s81167.pong.exceptions.PasswordIncorrectException;
+import bg.uni_sofia.s81167.pong.model.GameConnection;
 
 public class AuthenticationJob implements Job {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(AuthenticationJob.class);
 	private static final String OK_RESPONSE = "OK";
 	private static final String USER_NOT_FOUND = "NOT_FOUND";
-	private ConcurrentHashMap<String, GameContext> activeGames;
-	private ConcurrentHashMap<String, String> activeUsers;
+	
 	private boolean clientAuthenticated = false;
+	private ConcurrentHashMap<String, GameConnection> activeGames;
+	private Set<String> activeUsers;
 	private UserDAO userDAO;
 	private Socket socket;
+	private User user;
 
 	@Override
 	public void execute(JobExecutionContext context) throws JobExecutionException {
@@ -59,20 +65,17 @@ public class AuthenticationJob implements Job {
 
 	private User readUserFromClient(BufferedReader socketReader) throws IOException {
 		User user = new User();
-		LOGGER.debug("Reading username");
 		user.username = socketReader.readLine();
-		LOGGER.debug("Username is : " + user.username + " Reading password");
 		user.password = socketReader.readLine();
-		LOGGER.debug("Password is : " + user.password);
 
 		return user;
 	}
 
 	private void authenticateUser(JobExecutionContext context, PrintWriter socketWriter, User user)
 			throws SchedulerException {
-		LOGGER.debug("Authenticating user : " + user.username + " " + user.password);
-		if (userExists(user)) {
-			LOGGER.debug("User exists. Sending response.");
+		if (userAuthenticated(user)) {
+			activeUsers.add(user.username);
+			this.user = user;
 			clientAuthenticated = true;
 			socketWriter.println(OK_RESPONSE);
 			Scheduler scheduler = context.getScheduler();
@@ -84,8 +87,21 @@ public class AuthenticationJob implements Job {
 		LOGGER.debug("Response sent.");
 	}
 
-	private boolean userExists(User user) {
-		return true;
+	private boolean userAuthenticated(User user) {
+		try {
+			if(activeUsers.contains(user.username)){
+				return false;
+			}
+			if(!userDAO.userNameExists(user)){
+				userDAO.addUser(user);
+				return true;
+			}else{
+				return userDAO.userAuthenticated(user);
+			}
+		} catch ( SQLException e) {
+			LOGGER.error("Database error. If problem persists restart server.", e);
+			return false;
+		}
 	}
 
 	private void startClientConnectionJob(Scheduler scheduler) throws SchedulerException {
@@ -107,6 +123,7 @@ public class AuthenticationJob implements Job {
 		dataMap.put("socket", socket);
 		dataMap.put("activeGames", activeGames);
 		dataMap.put("activeUsers", activeUsers);
+		dataMap.put("username", user.username);
 		return dataMap;
 	}
 
@@ -124,8 +141,9 @@ public class AuthenticationJob implements Job {
 	private void setContext(JobExecutionContext context) {
 		JobDataMap jobDataMap = context.getJobDetail().getJobDataMap();
 		this.socket = (Socket) jobDataMap.get("socket");
-		this.activeGames = (ConcurrentHashMap<String, GameContext>) jobDataMap.get("activeGames");
-		this.activeUsers = (ConcurrentHashMap<String, String>) jobDataMap.get("activeUsers");
+		this.activeGames = (ConcurrentHashMap<String, GameConnection>) jobDataMap.get("activeGames");
+		this.activeUsers = (Set<String>) jobDataMap.get("activeUsers");
+		this.userDAO = (UserDAO) jobDataMap.get("userDAO");
 	}
 
 }

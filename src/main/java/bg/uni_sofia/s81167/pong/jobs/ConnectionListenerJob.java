@@ -5,6 +5,7 @@ import static org.quartz.TriggerBuilder.newTrigger;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.quartz.Job;
@@ -21,7 +22,9 @@ import org.quartz.TriggerKey;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import bg.uni_sofia.s81167.dao.UserDAO;
 import bg.uni_sofia.s81167.pong.game.GameContext;
+import bg.uni_sofia.s81167.pong.model.GameConnection;
 
 public class ConnectionListenerJob implements Job{
 
@@ -29,8 +32,9 @@ public class ConnectionListenerJob implements Job{
 	private static final int PORT = 10514;
 	private final ServerSocket serverSocket;
 	private boolean running = true;
-	private ConcurrentHashMap<String, String> activeUsers;
-	private ConcurrentHashMap<String, GameContext> activeGames;
+	private ConcurrentHashMap<String, GameConnection> activeGames;
+	private Set<String> activeUsers;
+	private UserDAO userDAO;
 	
 	public ConnectionListenerJob() throws IOException{
 		this.serverSocket = new ServerSocket(PORT);
@@ -53,8 +57,9 @@ public class ConnectionListenerJob implements Job{
 	@SuppressWarnings("unchecked")
 	private void setContext(JobExecutionContext context) {
 		JobDataMap jobDataMap = context.getJobDetail().getJobDataMap();
-		this.activeGames = (ConcurrentHashMap<String, GameContext>) jobDataMap.get("activeGames");
-		this.activeUsers = (ConcurrentHashMap<String, String>) jobDataMap.get("activeUsers");
+		this.activeGames = (ConcurrentHashMap<String, GameConnection>) jobDataMap.get("activeGames");
+		this.activeUsers = (Set<String>) jobDataMap.get("activeUsers");
+		this.userDAO = (UserDAO) jobDataMap.get("userDAO");
 	}
 
 	private void scheduleNewAuthenticationJob(Scheduler scheduler, Socket socket) {
@@ -87,8 +92,9 @@ public class ConnectionListenerJob implements Job{
 	private JobDetail buildJobDetail(JobKey jobKey, Socket socket) {
 		JobDataMap jobDataMap = new JobDataMap();
 		jobDataMap.put("activeGames", activeGames);
-		jobDataMap.put("activePlayers", activeUsers);
 		jobDataMap.put("socket", socket);
+		jobDataMap.put("userDAO", userDAO);
+		jobDataMap.put("activeUsers", activeUsers);
 		return JobBuilder.newJob(AuthenticationJob.class)
 				.withIdentity(jobKey)
 				.setJobData(jobDataMap)

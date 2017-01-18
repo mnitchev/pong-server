@@ -14,7 +14,7 @@ import org.slf4j.LoggerFactory;
 
 import bg.uni_sofia.s81167.model.User;
 
-public class UserWriter implements UserDAO{
+public class UserWriter {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(UserWriter.class);
 	private final File file;

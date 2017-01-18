@@ -2,19 +2,24 @@ package bg.uni_sofia.s81167.pong.game;
 
 import java.net.Socket;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import bg.uni_sofia.s81167.pong.model.Ball;
 import bg.uni_sofia.s81167.pong.model.Player;
 
 public class GameContext {
 	
-	public static final int LEFT_PLAYER_X = 20;
-	public static final int RIGHT_PLAYER_X = 1004;
-	public static final int CENTER_Y = 384;
-	public static final int STEP = 5;
-	public static final int RECTANGLE_X = 10;
-	public static final int RECTANGLE_Y = 50;
+	private static final Logger LOGGER = LoggerFactory.getLogger(GameContext.class);
 	public static final int WINDOW_WIDTH = 1024;
 	public static final int WINDOW_HEIGHT = 768;
+	public static final int LEFT_PLAYER_X = 20;
+	public static final int RIGHT_PLAYER_X = WINDOW_WIDTH - 40;
+	public static final int CENTER_Y = WINDOW_HEIGHT / 2;
+	public static final int CENTER_X = WINDOW_WIDTH / 2;
+	public static final int STEP = 10;
+	public static final int RECTANGLE_X = 10;
+	public static final int RECTANGLE_Y = 50;
 	private Player left;
 	private Player right;
 	private Ball ball;
@@ -31,27 +36,23 @@ public class GameContext {
 		this.ball = new Ball();
 	}
 	
-	public void updatePlayer(String username, Command command) {
-		if(left.username.equals(username)){
-			updatePosition(left, command);
-		}else if(right.username.equals(username)){
-			updatePosition(right, command);
-		}
-	}
-	
-	private void updatePosition(Player player, Command command) {
+	private void updatePlayer(Player player, Command command) {
 		if(command == Command.UP){
+			LOGGER.debug("Updating poistion {}", command);
 			if(player.positionY - STEP >= 0){
 				player.positionY -= STEP;
 			}else{
 				player.positionY = 0;
 			}
+			LOGGER.debug("Player positionY = {}", player.positionY);
 		}else if(command == Command.DOWN){
-			if(player.positionY - STEP <= WINDOW_HEIGHT){
+			LOGGER.debug("Updating poistion {}", command);
+			if(player.positionY + STEP < WINDOW_HEIGHT - 100){
 				player.positionY += STEP;
 			}else{
-				player.positionY = WINDOW_HEIGHT;
+				player.positionY = WINDOW_HEIGHT - 100;
 			}
+			LOGGER.debug("Player positionY = {}", player.positionY);
 		}
 	
 	}
@@ -105,12 +106,10 @@ public class GameContext {
 	}
 
 	public void updateLeftPlayer(Command command) {
-		// TODO Auto-generated method stub
-		
+		updatePlayer(left, command);
 	}
 
 	public void updateRightPlayer(Command command) {
-		// TODO Auto-generated method stub
-		
+		updatePlayer(right, command);		
 	}
 }

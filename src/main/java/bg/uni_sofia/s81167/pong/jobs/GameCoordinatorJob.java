@@ -3,10 +3,9 @@ package bg.uni_sofia.s81167.pong.jobs;
 import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.Socket;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 
-import org.junit.experimental.theories.Theories;
 import org.quartz.Job;
 import org.quartz.JobDataMap;
 import org.quartz.JobExecutionContext;
@@ -17,69 +16,174 @@ import org.slf4j.LoggerFactory;
 import bg.uni_sofia.s81167.pong.game.Command;
 import bg.uni_sofia.s81167.pong.game.GameContext;
 import bg.uni_sofia.s81167.pong.model.Ball;
+import bg.uni_sofia.s81167.pong.model.GameConnection;
 import bg.uni_sofia.s81167.pong.model.Player;
 
 public class GameCoordinatorJob implements Job {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger(GameCoordinatorJob.class);
 
+	private static final String OK_STATUS = "OK";
+	private static final String DISCONNECT_STATUS = "DISCONNECT";
+	private static final String PAUSE_STATUS = "PAUSED";
+	private String status = PAUSE_STATUS;
+
 	private Socket hostSocket;
-	private ConcurrentLinkedQueue<Command> hostPlayerQueue;
+	private Queue<Command> hostPlayerQueue;
 
 	private Socket playerSocket;
-	private ConcurrentLinkedQueue<Command> playerQueue;
+	private Queue<Command> playerQueue;
 
-	private ConcurrentHashMap<String, Socket> playerSocketConnections;
-	private ConcurrentHashMap<String, ConcurrentLinkedQueue<Command>> playerConnectionQueues;
-	private GameContext gameContext;
 	private String gameId;
+	private ConcurrentHashMap<String, GameConnection> activeGames;
+	private GameContext gameContext;
+
+	private PrintWriter hostWriter;
+	private PrintWriter playerWriter;
+
+	private boolean running = true;
 
 	@Override
 	public void execute(JobExecutionContext context) throws JobExecutionException {
 		setContext(context.getJobDetail().getJobDataMap());
+		createHostWriter();
 		createGameContext();
-		while (true) {
+		while (running) {
+			waitForNextBroadcast();
+			checkIfUsersDisconnected();
 			processInputFromPlayers();
 			updateBall();
 			sendUpdateToPlayers();
 		}
+		LOGGER.debug("Stopping game coordinator.");
+		activeGames.remove(gameId);
+	}
+
+	private void checkIfUsersDisconnected() throws JobExecutionException {
+		if (hostSocket != null && hostSocket.isClosed()) {
+			LOGGER.info("Host user disconnected");
+			disconnectHost();
+		}
+		if (playerSocket != null && playerSocket.isClosed()) {
+			removePlayerResources();
+		}
+	}
+
+	private void waitForNextBroadcast() {
+		try {
+			Thread.sleep(10);
+		} catch (InterruptedException e) {
+			LOGGER.error("Interrupted exception. This should never happen, but shouldn't be fatal if only once.", e);
+		}
 	}
 
 	private void sendUpdateToPlayers() throws JobExecutionException {
-		sendGameInformationToHost();
+		if (hostSocket != null) {
+			sendGameInformationToHost();
+		}
 		if (playerSocket == null) {
+			this.status = PAUSE_STATUS;
 			checkIfPlayerConnected();
 		} else {
+			if (playerWriter == null) {
+				createPlayerWriter();
+			}
 			sendGameInformationToPlayer();
 		}
 	}
 
-	private void sendGameInformationToHost() {
-		try {
-			PrintWriter writer = new PrintWriter(hostSocket.getOutputStream());
-			Player left = gameContext.getLeftPlayer();
-			sendPlayerPosition(left, writer);
-			Player right = gameContext.getRightPlayer();
-			sendPlayerPosition(right, writer);
-			sendBall(writer);
-		} catch (IOException e) {
-			LOGGER.error("Player disconnected. Reseting game", e);
-			throw new JobExecutionException();
-		}	
+	private void sendGameInformationToHost() throws JobExecutionException {
+		hostWriter.println(status);
+		Player left = gameContext.getLeftPlayer();
+		sendPlayerPosition(left, hostWriter);
+		Player right = gameContext.getRightPlayer();
+		sendPlayerPosition(right, hostWriter);
+		sendBall(hostWriter);
 	}
 
 	private void sendGameInformationToPlayer() throws JobExecutionException {
-		try {
-			PrintWriter writer = new PrintWriter(playerSocket.getOutputStream());
-			Player left = gameContext.getLeftPlayer();
-			sendPlayerPosition(left, writer);
-			Player right = gameContext.getRightPlayer();
-			sendPlayerPosition(right, writer);
-			sendBall(writer);
-		} catch (IOException e) {
-			LOGGER.error("Player disconnected. Reseting game", e);
-			throw new JobExecutionException();
+		playerWriter.println(status);
+		Player left = gameContext.getLeftPlayer();
+		sendPlayerPosition(left, playerWriter);
+		Player right = gameContext.getRightPlayer();
+		sendPlayerPosition(right, playerWriter);
+		sendBall(playerWriter);
+	}
+
+	private void updateBall() {
+		if (!PAUSE_STATUS.equals(status)) {
+			gameContext.updateBall();
 		}
+	}
+
+	private void processInputFromPlayers() {
+		processHostInput();
+		processRightPlayerInpit();
+	}
+
+	private void checkIfPlayerConnected() {
+		GameConnection connection = activeGames.get(gameId);
+		playerQueue = connection.getCommandQueue();
+		playerSocket = connection.getSocket();
+	}
+
+	private void processHostInput() {
+		Command command;
+		synchronized (hostPlayerQueue) {
+			command = hostPlayerQueue.poll();
+		}
+		if (command != null) {
+			checkIfHostWantsToDisconenct(command);
+			gameContext.updateLeftPlayer(command);
+		}
+	}
+
+	private void processRightPlayerInpit() {
+		if (playerQueue == null) {
+			checkIfPlayerConnected();
+		} else {
+			if (!playerQueue.isEmpty()) {
+				Command command;
+				synchronized (playerQueue) {
+					command = playerQueue.poll();
+				}
+				checkIfPlayerWantsToDisconnect(command);
+				gameContext.updateRightPlayer(command);
+			}
+		}
+	}
+
+	private void checkIfPlayerWantsToDisconnect(Command command) {
+		if (command == Command.DISCONNECT) {
+			removePlayerResources();
+		}
+	}
+
+	private void checkIfHostWantsToDisconenct(Command command) {
+		if (command.toInt() == Command.DISCONNECT.toInt()) {
+			disconnectHost();
+		}
+	}
+
+	private void disconnectHost() {
+		status = DISCONNECT_STATUS;
+		running = false;
+		hostSocket = null;
+		hostPlayerQueue = null;
+	}
+
+	private void createGameContext() {
+		this.gameContext = new GameContext();
+	}
+
+	private void removePlayerResources() {
+		LOGGER.debug("Removing player from game");
+		this.playerSocket = null;
+		this.playerQueue = null;
+		this.playerWriter = null;
+		GameConnection connection = activeGames.get(gameId);
+		connection.deactivate();
+		activeGames.put(gameId, connection);
 	}
 
 	private void sendBall(PrintWriter writer) {
@@ -88,78 +192,31 @@ public class GameCoordinatorJob implements Job {
 		writer.println(ball.getY());
 	}
 
-	private void sendPlayerPosition(Player left, PrintWriter writer) {
-		writer.println(left.positionX);
-		writer.println(left.positionY);
+	private void sendPlayerPosition(Player player, PrintWriter writer) {
+		writer.println(player.positionX);
+		writer.println(player.positionY);
+		writer.println(player.score);
 	}
 
-	private void updateBall() {
-		gameContext.updateBall();
-	}
-
-	private void processInputFromPlayers() {
-		processLeftPlayerInput();
-		processRightPlayerInpit();
-	}
-
-	private void processRightPlayerInpit() {
-		if (hostPlayerQueue == null) {
-			checkIfPlayerConnected();
-		} else {
-			if (!playerQueue.isEmpty()) {
-				Command command = playerQueue.remove();
-				gameContext.updateRightPlayer(command);
-			}
-		}
-	}
-
-	private void checkIfPlayerConnected() {
-		playerQueue = playerConnectionQueues.get(gameId);
-		playerSocket = playerSocketConnections.get(gameId);
-	}
-
-	private void processLeftPlayerInput() {
-		if (!hostPlayerQueue.isEmpty()) {
-			Command command = hostPlayerQueue.remove();
-			gameContext.updateLeftPlayer(command);
-		}
-	}
-
-	private void createGameContext() {
-		this.gameContext = new GameContext();
-	}
-
-	@SuppressWarnings("unchecked")
 	private void setContext(JobDataMap jobDataMap) throws JobExecutionException {
+		setGameId(jobDataMap);
 		setSocket(jobDataMap);
 		setLeftPlayerQueue(jobDataMap);
-		setRightPlayerSockets(jobDataMap);
-		setConnectionQueues(jobDataMap);
-		setGameId(jobDataMap);
+		setActiveGames(jobDataMap);
 	}
 
 	@SuppressWarnings("unchecked")
-	private void setRightPlayerSockets(JobDataMap jobDataMap) throws JobExecutionException {
-		this.playerSocketConnections = (ConcurrentHashMap<String, Socket>) jobDataMap.get("rightSocketConnections");
-		if (playerSocketConnections == null) {
-			LOGGER.error("Context initialization error. Right socket connections not set.");
-			throw new JobExecutionException();
-		}
-	}
-
-	@SuppressWarnings("unchecked")
-	private void setConnectionQueues(JobDataMap jobDataMap) throws JobExecutionException {
-		this.playerConnectionQueues = (ConcurrentHashMap<String, ConcurrentLinkedQueue<Command>>) jobDataMap
-				.get("playerConnectionQueues");
-		if (playerConnectionQueues == null) {
-			LOGGER.error("Context initialization error. Game connection queues not set");
+	private void setActiveGames(JobDataMap jobDataMap) throws JobExecutionException {
+		this.activeGames = (ConcurrentHashMap<String, GameConnection>) jobDataMap.get("activeGames");
+		if (activeGames == null) {
+			LOGGER.error("Context initialization error. Active games not set.");
 			throw new JobExecutionException();
 		}
 	}
 
 	@SuppressWarnings("unchecked")
 	private void setLeftPlayerQueue(JobDataMap jobDataMap) throws JobExecutionException {
-		this.hostPlayerQueue = (ConcurrentLinkedQueue<Command>) jobDataMap.get("hostPlayerQueue");
+		this.hostPlayerQueue = (Queue<Command>) jobDataMap.get("hostPlayerQueue");
 		if (hostPlayerQueue == null) {
 			LOGGER.error("Context initialization error. Left player queue not set");
 			throw new JobExecutionException();
@@ -182,48 +239,23 @@ public class GameCoordinatorJob implements Job {
 		}
 	}
 
-	/*
-	 * private static final Logger LOGGER =
-	 * LoggerFactory.getLogger(GameCoordinatorJob.class); private String gameId;
-	 * private ConcurrentHashMap<String, ConcurrentLinkedQueue<Command>>
-	 * activeGames; public Socket left; public Socket right;
-	 * 
-	 * @Override public void execute(JobExecutionContext context) throws
-	 * JobExecutionException { setContext(context); sendGameInformation(); }
-	 * 
-	 * private void sendGameInformation() throws JobExecutionException {
-	 * GameContext gameContext = activeGames.get(gameId); Socket
-	 * leftPlayerSocket = gameContext.getLeftPlayerSocket(); Socket
-	 * rightPlayerSocket = gameContext.getRightPlayerSocket(); try {
-	 * sendToPlayer(leftPlayerSocket, gameContext);
-	 * sendToPlayer(rightPlayerSocket, gameContext); } catch (IOException e) {
-	 * LOGGER.warn("Client disconnected!", e); throw new
-	 * JobExecutionException(e); } }
-	 * 
-	 * private void sendToPlayer(Socket rightPlayerSocket, GameContext
-	 * gameContext) throws IOException { PrintWriter socketWriter = new
-	 * PrintWriter(rightPlayerSocket.getOutputStream(), true); Player left =
-	 * gameContext.getLeftPlayer(); Player right = gameContext.getRightPlayer();
-	 * sendPlayerPosition(socketWriter, left); sendPlayerPosition(socketWriter,
-	 * right); sendBallPosition(socketWriter, gameContext);
-	 * sendScore(socketWriter, left, right); }
-	 * 
-	 * private void sendScore(PrintWriter socketWriter, Player left, Player
-	 * right) { socketWriter.println(left.score);
-	 * socketWriter.println(right.score); }
-	 * 
-	 * private void sendBallPosition(PrintWriter socketWriter, GameContext
-	 * gameContext) { Ball ball = gameContext.getBall();
-	 * socketWriter.println(ball.getX()); socketWriter.println(ball.getY()); }
-	 * 
-	 * private void sendPlayerPosition(PrintWriter socketWriter, Player player)
-	 * { socketWriter.println(player.positionX);
-	 * socketWriter.println(player.positionY); }
-	 * 
-	 * @SuppressWarnings("unchecked") private void
-	 * setContext(JobExecutionContext context) { JobDataMap jobDataMap =
-	 * context.getJobDetail().getJobDataMap(); this.activeGames =
-	 * (ConcurrentHashMap<String, GameContext>) jobDataMap.get("gameContext");
-	 * this.gameId = (String) jobDataMap.get("gameId"); }
-	 */
+	private void createHostWriter() throws JobExecutionException {
+		try {
+			this.hostWriter = new PrintWriter(hostSocket.getOutputStream(), true);
+		} catch (IOException e) {
+			LOGGER.error("Client disconencted!", e);
+			throw new JobExecutionException(e);
+		}
+	}
+
+	private void createPlayerWriter() {
+		try {
+			playerWriter = new PrintWriter(playerSocket.getOutputStream(), true);
+			this.status = OK_STATUS;
+		} catch (IOException e) {
+			LOGGER.error("Player disconnected. Reseting game", e);
+			removePlayerResources();
+		}
+	}
+
 }
