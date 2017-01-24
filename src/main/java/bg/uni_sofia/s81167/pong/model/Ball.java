@@ -7,8 +7,8 @@ import bg.uni_sofia.s81167.pong.game.GameContext;
 public class Ball {
 	private int positionX;
 	private int positionY;
-	private int xa = 5;
-	private int ya = 5;
+	private int xa = 3;
+	private int ya = 3;
 	private int RADIUS = 20;
 
 	public Ball() {

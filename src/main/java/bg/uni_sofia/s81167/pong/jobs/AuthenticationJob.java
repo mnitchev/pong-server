@@ -10,7 +10,6 @@ import java.net.Socket;
 import java.sql.SQLException;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentSkipListSet;
 
 import org.quartz.Job;
 import org.quartz.JobBuilder;
@@ -28,7 +27,6 @@ import org.slf4j.LoggerFactory;
 
 import bg.uni_sofia.s81167.dao.UserDAO;
 import bg.uni_sofia.s81167.model.User;
-import bg.uni_sofia.s81167.pong.exceptions.PasswordIncorrectException;
 import bg.uni_sofia.s81167.pong.model.GameConnection;
 
 public class AuthenticationJob implements Job {

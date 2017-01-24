@@ -10,7 +10,6 @@ import bg.uni_sofia.s81167.pong.model.Player;
 
 public class GameContext {
 	
-	private static final Logger LOGGER = LoggerFactory.getLogger(GameContext.class);
 	public static final int WINDOW_WIDTH = 1024;
 	public static final int WINDOW_HEIGHT = 768;
 	public static final int LEFT_PLAYER_X = 20;
@@ -38,21 +37,17 @@ public class GameContext {
 	
 	private void updatePlayer(Player player, Command command) {
 		if(command == Command.UP){
-			LOGGER.debug("Updating poistion {}", command);
 			if(player.positionY - STEP >= 0){
 				player.positionY -= STEP;
 			}else{
 				player.positionY = 0;
 			}
-			LOGGER.debug("Player positionY = {}", player.positionY);
 		}else if(command == Command.DOWN){
-			LOGGER.debug("Updating poistion {}", command);
 			if(player.positionY + STEP < WINDOW_HEIGHT - 100){
 				player.positionY += STEP;
 			}else{
 				player.positionY = WINDOW_HEIGHT - 100;
 			}
-			LOGGER.debug("Player positionY = {}", player.positionY);
 		}
 	
 	}

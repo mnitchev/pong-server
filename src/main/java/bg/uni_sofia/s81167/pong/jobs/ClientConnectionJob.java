@@ -55,6 +55,7 @@ public class ClientConnectionJob implements Job {
 		setConnection();
 		while (connectionHealthy) {
 			connectToGame();
+			running = true;
 		}
 	}
 
